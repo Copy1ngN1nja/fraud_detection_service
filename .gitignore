@@ -1,3 +1,8 @@
 .venv
+<<<<<<< HEAD
 *.csv
 *.pyc
+=======
+*.pyc
+*.csv
+>>>>>>> 147b972e305ac8370aa392819ec9ce9eb6871b94
