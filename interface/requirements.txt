@@ -1,0 +1,12 @@
+pandas==2.3.3
+numpy==2.5.1
+matplotlib==3.11.0
+seaborn==0.13.2
+psycopg2-binary==2.9.10
+sqlalchemy==2.0.36
+streamlit==1.45.0
+kafka-python==2.2.6
+toml==0.10.2
+scikit-learn==1.9.0
+joblib==1.5.3
+category_encoders==2.9.0

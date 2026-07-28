@@ -1,0 +1,236 @@
+services:
+  # Zookeeper (обязательный для Kafka)
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.3.0
+    networks:
+      - ml-scorer
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+
+  # Сервис Kafka
+  kafka:
+    image: confluentinc/cp-kafka:7.3.0
+    depends_on:
+      - zookeeper
+    networks:
+      - ml-scorer
+    ports:
+      - "9095:9095"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:9095
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"  # Отключаем автосоздание топиков
+    healthcheck:
+      test: ["CMD", "kafka-topics", "--bootstrap-server", "localhost:9095", "--list"]
+      interval: 5s
+      timeout: 10s
+      retries: 10
+
+  # Сервис для создания топиков при старте
+  kafka-setup:
+    image: confluentinc/cp-kafka:7.3.0
+    depends_on:
+      kafka:
+        condition: service_healthy  # Ждем пока Kafka станет здоровой
+    networks:
+      - ml-scorer
+    restart: on-failure
+    entrypoint: [ "/bin/bash", "-c" ]
+    command: |
+      "
+      echo 'Ожидание готовности Kafka...'
+      while ! kafka-topics --bootstrap-server kafka:9092 --list; do
+        sleep 1
+      done
+
+      echo 'Создание топиков...'
+      kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic transactions --partitions 3 --replication-factor 1 --config retention.ms=604800000
+      kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic scoring --partitions 3 --replication-factor 1 --config retention.ms=604800000
+
+      echo 'Топики успешно созданы:'
+      kafka-topics --bootstrap-server kafka:9092 --list
+      "
+  
+  # Сервис для удобного просмотра топиков и настройки kafka
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    depends_on:
+      - kafka
+    networks:
+      - ml-scorer
+    ports:
+      - "8080:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+      KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
+
+  fraud_detector:
+    build: ./fraud_detector
+    networks:
+      - ml-scorer
+    env_file:
+      - .env
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
+      KAFKA_TRANSACTIONS_TOPIC: "transactions"
+      KAFKA_SCORING_TOPIC: "scoring"
+      POSTGRES_HOST: ${POSTGRES_HOST}
+      POSTGRES_PORT: ${POSTGRES_PORT}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      ADV_VALIDATION_BUFFER_SIZE: "1000"
+      GRAFANA_URL: "http://grafana:3000"
+      GRAFANA_API_KEY: ${GRAFANA_API_KEY}
+      GRAFANA_DASHBOARD_UID: "adversarial-validation"
+    expose:
+      - 8000
+    ports:
+      - "8010:8000"
+    depends_on:
+      kafka:
+        condition: service_started
+      kafka-setup:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:15
+    networks:
+      - ml-scorer
+    env_file:
+      - .env
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5434:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 10s
+      retries: 5
+
+  interface:
+    build: ./interface
+    networks:
+      - ml-scorer
+    env_file:
+      - .env
+    environment:
+      POSTGRES_HOST: ${POSTGRES_HOST}
+      POSTGRES_PORT: ${POSTGRES_PORT}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      KAFKA_BROKERS: "kafka:9092"
+      KAFKA_TOPIC: "transactions"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      kafka-setup:
+        condition: service_completed_successfully
+    ports:
+      - "8501:8501"
+
+  score_writer:
+    build: ./score_writer
+    networks:
+      - ml-scorer
+    env_file:
+      - .env
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS}
+      KAFKA_SCORING_TOPIC: ${KAFKA_SCORING_TOPIC}
+      POSTGRES_HOST: ${POSTGRES_HOST}
+      POSTGRES_PORT: ${POSTGRES_PORT}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    expose:
+      - 8001
+    ports:
+      - "8011:8001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      kafka-setup:
+        condition: service_completed_successfully
+
+  # Node-exporter - метрики хоста для Prometheus (таргет 'node' в prometheus.yml)
+  node-exporter:
+    image: prom/node-exporter:latest
+    networks:
+      - ml-scorer
+    ports:
+      - "9100:9100"
+
+  # Prometheus собирает /metrics с fraud_detector (8000) и score_writer (8001)
+  prometheus:
+    image: prom/prometheus:latest
+    networks:
+      - ml-scorer
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    depends_on:
+      - fraud_detector
+      - score_writer
+      - node-exporter
+
+  # Grafana с дашбордами: adversarial-валидация (ROC-AUC + feature importance
+  # тепловые карты, Postgres) и мониторинг скоринга (density/TPS/barplot по
+  # us_state, merch, cat_id, тоже Postgres). Провижинится из ./grafana/provisioning
+  grafana:
+    image: grafana/grafana:11.1.0
+    networks:
+      - ml-scorer
+    env_file:
+      - .env
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      POSTGRES_HOST: ${POSTGRES_HOST}
+      POSTGRES_PORT: ${POSTGRES_PORT}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning
+      - ./grafana/dashboards:/etc/grafana/dashboards
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      prometheus:
+        condition: service_started
+
+networks:
+  ml-scorer:
+    name: ml-scorer
+    driver: bridge
+
+volumes:
+  postgres_data:
+  grafana_data:
+  prometheus_data:

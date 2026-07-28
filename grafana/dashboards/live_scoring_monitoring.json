@@ -1,0 +1,127 @@
+{
+  "title": "Live Scoring Monitoring",
+  "uid": "live-scoring-monitoring",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "graphTooltip": 1,
+  "refresh": "10s",
+  "time": { "from": "now-1h", "to": "now" },
+  "timezone": "browser",
+  "tags": ["fraud-detector", "scoring"],
+  "templating": {
+    "list": [
+      {
+        "name": "us_state",
+        "label": "US State",
+        "type": "query",
+        "datasource": { "type": "postgres", "uid": "postgres_fraud_detection" },
+        "query": "SELECT DISTINCT us_state FROM scores WHERE us_state IS NOT NULL ORDER BY us_state",
+        "refresh": 2,
+        "sort": 1,
+        "multi": true,
+        "includeAll": true,
+        "current": { "text": "All", "value": ["$__all"] }
+      },
+      {
+        "name": "merch",
+        "label": "Merchant",
+        "type": "query",
+        "datasource": { "type": "postgres", "uid": "postgres_fraud_detection" },
+        "query": "SELECT DISTINCT merch FROM scores WHERE merch IS NOT NULL ORDER BY merch",
+        "refresh": 2,
+        "sort": 1,
+        "multi": true,
+        "includeAll": true,
+        "current": { "text": "All", "value": ["$__all"] }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "histogram",
+      "title": "Плотность распределения скоров (score density)",
+      "description": "Распределение предсказанных вероятностей мошенничества для транзакций, отфильтрованных по US State / Merchant.",
+      "gridPos": { "h": 10, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "postgres", "uid": "postgres_fraud_detection" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT score FROM scores WHERE $__timeFilter(created_at) AND us_state IN (${us_state:sqlstring}) AND merch IN (${merch:sqlstring})",
+          "datasource": { "type": "postgres", "uid": "postgres_fraud_detection" }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "none", "custom": {} },
+        "overrides": []
+      },
+      "options": {
+        "bucketOffset": 0,
+        "combine": false,
+        "legend": { "showLegend": false }
+      }
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "TPS обработки транзакций",
+      "description": "Количество обработанных (записанных в scores) транзакций в секунду, отфильтрованных по US State / Merchant.",
+      "gridPos": { "h": 10, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "postgres", "uid": "postgres_fraud_detection" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT date_trunc('second', created_at) AS \"time\", count(*)::float AS \"tps\" FROM scores WHERE $__timeFilter(created_at) AND us_state IN (${us_state:sqlstring}) AND merch IN (${merch:sqlstring}) GROUP BY 1 ORDER BY 1",
+          "datasource": { "type": "postgres", "uid": "postgres_fraud_detection" }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": { "drawStyle": "line", "fillOpacity": 15, "spanNulls": true }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "showLegend": false },
+        "tooltip": { "mode": "single" }
+      }
+    },
+    {
+      "id": 3,
+      "type": "barchart",
+      "title": "Средняя доля фрода по категории продукта (последние 1000 транзакций)",
+      "description": "AVG(fraud_flag) по cat_id среди последних 1000 записанных транзакций (без фильтров по US State / Merchant).",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 10 },
+      "datasource": { "type": "postgres", "uid": "postgres_fraud_detection" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT cat_id, AVG(fraud_flag)::float AS fraud_rate FROM (SELECT cat_id, fraud_flag FROM scores WHERE cat_id IS NOT NULL ORDER BY created_at DESC LIMIT 1000) t GROUP BY cat_id ORDER BY fraud_rate DESC",
+          "datasource": { "type": "postgres", "uid": "postgres_fraud_detection" }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "custom": {}
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "auto",
+        "xField": "cat_id",
+        "legend": { "showLegend": false },
+        "tooltip": { "mode": "single" }
+      }
+    }
+  ]
+}

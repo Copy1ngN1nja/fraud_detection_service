@@ -12,6 +12,11 @@ logger = logging.getLogger(__name__)
 RANDOM_STATE = 42
 CAT_COLS = ['merch', 'cat_id', 'name_1', 'name_2', 'street', 'one_city', 'us_state', 'jobs']
 
+# Загружается один раз при импорте модуля, а не на каждый вызов run_preproc
+logger.info('Loading fitted encoder...')
+FITTED_ENCODER = joblib.load('./models/catboost_encoder.joblib')
+logger.info('Fitted encoder loaded successfully.')
+
 def extract_time_features(input_df: pd.DataFrame) -> pd.DataFrame:
     logger.debug('Adding time features...')
     output_df = input_df.copy()
@@ -56,7 +61,7 @@ def transform_num_features(input_df: pd.DataFrame) -> pd.DataFrame:
     return output_df
 
 
-def preprocess_data(test_df: pd.DataFrame, fitted_encoder) -> pd.DataFrame:
+def preprocess_data(test_df: pd.DataFrame, fitted_encoder=FITTED_ENCODER) -> pd.DataFrame:
     logger.info('Preprocessing test data...')
     test_df['gender'] = test_df['gender'].map({"F": 1, 'M': 0})
     test_df = extract_time_features(test_df)
@@ -84,14 +89,9 @@ def run_preproc(input_df):
 
     logger.info('Missing values handled. Proceeding to preprocessing...')
 
-    # Load the fitted encoder (assuming it's saved as a joblib file)
-    logger.info('Loading fitted encoder...')
-    fitted_encoder = joblib.load('./models/catboost_encoder.joblib')
-    logger.info('Fitted encoder loaded successfully.')
-
-    # Preprocess the data
+    # Preprocess the data (uses the encoder loaded once at module import)
     logger.info('Preprocessing data...')
-    preprocessed_df = preprocess_data(input_df, fitted_encoder=fitted_encoder)
+    preprocessed_df = preprocess_data(input_df)
     logger.info('Data preprocessing completed successfully.')
 
     return preprocessed_df

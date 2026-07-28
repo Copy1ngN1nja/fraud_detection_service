@@ -1,0 +1,166 @@
+{
+  "title": "Adversarial Validation Monitoring",
+  "uid": "adversarial-validation",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "graphTooltip": 0,
+  "refresh": "30s",
+  "time": { "from": "now-24h", "to": "now" },
+  "timezone": "browser",
+  "tags": ["fraud-detector", "adversarial-validation"],
+  "annotations": {
+    "list": [
+      {
+        "name": "Adversarial validation runs",
+        "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+        "enable": true,
+        "iconColor": "orange",
+        "type": "tags",
+        "matchAny": false,
+        "tags": ["adversarial-validation"]
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Adversarial Validation ROC-AUC (historical vs. current data)",
+      "description": "0.5 ≈ no drift (model can't tell historical from current data). Close to 1.0 (or 0.0) ≈ strong drift. One point per adversarial-validation run (every 1000 scored transactions). Green band 0.45-0.55 = OK, yellow 0.35-0.45 / 0.55-0.65 = watch, red beyond that = drift.",
+      "gridPos": { "h": 11, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "postgres", "uid": "postgres_fraud_detection" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT run_at AS \"time\", roc_auc AS \"ROC-AUC\" FROM adversarial_validation_results ORDER BY run_at",
+          "datasource": { "type": "postgres", "uid": "postgres_fraud_detection" }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "min": 0,
+          "max": 1,
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "showPoints": "always",
+            "pointSize": 8,
+            "spanNulls": true,
+            "thresholdsStyle": { "mode": "area" }
+          },
+          "color": { "mode": "fixed", "fixedColor": "blue" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "rgba(242, 73, 92, 0.25)", "value": null },
+              { "color": "rgba(250, 222, 42, 0.25)", "value": 0.35 },
+              { "color": "rgba(115, 191, 105, 0.25)", "value": 0.45 },
+              { "color": "rgba(250, 222, 42, 0.25)", "value": 0.55 },
+              { "color": "rgba(242, 73, 92, 0.25)", "value": 0.65 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "showLegend": false },
+        "tooltip": { "mode": "single" }
+      }
+    },
+    {
+      "id": 2,
+      "type": "table",
+      "title": "Adversarial Validation - Top-3 Feature Importance",
+      "description": "Long-format table (one row per feature per run) with the importance column colored as a heatmap, so the most 'drifting' features per run stand out.",
+      "gridPos": { "h": 11, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "postgres", "uid": "postgres_fraud_detection" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT run_at AS \"time\", top1_feature AS feature, top1_importance AS importance, roc_auc FROM adversarial_validation_results WHERE top1_feature IS NOT NULL UNION ALL SELECT run_at, top2_feature, top2_importance, roc_auc FROM adversarial_validation_results WHERE top2_feature IS NOT NULL UNION ALL SELECT run_at, top3_feature, top3_importance, roc_auc FROM adversarial_validation_results WHERE top3_feature IS NOT NULL ORDER BY \"time\" DESC",
+          "datasource": { "type": "postgres", "uid": "postgres_fraud_detection" }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": { "type": "color-background" },
+            "filterable": true
+          },
+          "color": { "mode": "continuous-BlYlRd" }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "feature" },
+            "properties": [
+              { "id": "custom.cellOptions", "value": { "type": "auto" } },
+              { "id": "color", "value": { "mode": "thresholds" } }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "time" },
+            "properties": [
+              { "id": "custom.cellOptions", "value": { "type": "auto" } },
+              { "id": "color", "value": { "mode": "thresholds" } },
+              { "id": "unit", "value": "time: YYYY-MM-DD HH:mm:ss" }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "sortBy": [{ "displayName": "time", "desc": true }]
+      }
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Target (score) PSI: current vs. historical baseline",
+      "description": "Population Stability Index between the model's score distribution on the current batch and on the historical baseline (same rows scored through the same booster). < 0.1 = stable, 0.1-0.25 = moderate shift, > 0.25 = significant shift.",
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 11 },
+      "datasource": { "type": "postgres", "uid": "postgres_fraud_detection" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT run_at AS \"time\", psi_target AS \"PSI\" FROM adversarial_validation_results WHERE psi_target IS NOT NULL ORDER BY run_at",
+          "datasource": { "type": "postgres", "uid": "postgres_fraud_detection" }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.1 },
+              { "color": "red", "value": 0.25 }
+            ]
+          },
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "thresholdsStyle": { "mode": "line" }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "showLegend": false },
+        "tooltip": { "mode": "single" }
+      }
+    }
+  ]
+}

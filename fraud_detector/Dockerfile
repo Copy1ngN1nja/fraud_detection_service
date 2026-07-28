@@ -18,8 +18,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Копирование исходного кода
 COPY . .
 
-# Точки монтирования
-VOLUME /app/input
-VOLUME /app/output
+# Эксаонируем порт для Prometheus
+EXPOSE 8000
 
 CMD ["python", "./app/app.py"]

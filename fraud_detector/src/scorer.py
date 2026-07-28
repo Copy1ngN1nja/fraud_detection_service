@@ -15,14 +15,18 @@ BEST_THRESHOLD = 0.4944105290781792
 logger.info('Pretrained model imported successfully...')
 
 # Make prediction
-def make_pred(dt, path_to_file):
+def make_pred(dt, source="kafka_transaction_topic"):
     predictions = BOOSTER.predict(dt)
-    # Make submission dataframe
+    y_pred = (predictions > BEST_THRESHOLD) * 1
+
+    # Make submission dataframe (fraud_flag - имя, ожидаемое score_writer'ом
+    # и колонкой scores.fraud_flag в Postgres)
     submission = pd.DataFrame({
-        'index':  pd.read_csv(path_to_file).index,
-        'prediction': (predictions > BEST_THRESHOLD) * 1
+        'score':  predictions,
+        'fraud_flag': y_pred.astype(int)
     })
-    logger.info('Prediction complete for file: %s', path_to_file)
+
+    logger.info('Prediction complete for data from: %s', source)
 
     # Return proba for positive class
-    return submission, predictions
+    return submission, predictions, y_pred
